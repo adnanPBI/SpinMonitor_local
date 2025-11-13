@@ -1,0 +1,172 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run weekly security scan
+    - cron: '0 0 * * 0'
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  SOLUTION_PATH: 'SpinMonitor.sln'
+
+jobs:
+  # Code Style Check
+  code-style:
+    name: Code Style & Formatting
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Install dotnet format
+      run: dotnet tool install -g dotnet-format
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: Check formatting
+      run: dotnet format ${{ env.SOLUTION_PATH }} --verify-no-changes --verbosity diagnostic
+
+    - name: Generate formatting report
+      if: failure()
+      run: |
+        dotnet format ${{ env.SOLUTION_PATH }} --verify-no-changes --report ./format-report.json
+
+    - name: Upload formatting report
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: format-report
+        path: format-report.json
+
+  # Dependency Check
+  dependency-check:
+    name: Dependency Vulnerability Check
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: List packages
+      run: dotnet list package --include-transitive > packages-list.txt
+
+    - name: Check for vulnerable packages
+      run: |
+        $output = dotnet list package --vulnerable --include-transitive 2>&1
+        $output | Out-File -FilePath vulnerable-packages.txt
+
+        if ($output -match "has the following vulnerable packages") {
+          Write-Error "❌ Vulnerable packages found!"
+          $output
+          exit 1
+        } else {
+          Write-Host "✅ No vulnerable packages found"
+        }
+      shell: pwsh
+
+    - name: Upload dependency report
+      uses: actions/upload-artifact@v3
+      with:
+        name: dependency-report
+        path: |
+          packages-list.txt
+          vulnerable-packages.txt
+
+  # Code Analysis
+  code-analysis:
+    name: Static Code Analysis
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: Run code analysis
+      run: |
+        dotnet build ${{ env.SOLUTION_PATH }} `
+          /p:Configuration=Release `
+          /p:EnableNETAnalyzers=true `
+          /p:AnalysisMode=AllEnabledByDefault `
+          /p:TreatWarningsAsErrors=false `
+          /warnaserror-
+
+    - name: Generate analysis report
+      run: |
+        dotnet build ${{ env.SOLUTION_PATH }} `
+          /p:Configuration=Release `
+          /p:EnableNETAnalyzers=true `
+          /filelogger `
+          /fileloggerparameters:LogFile=analysis-report.txt
+      continue-on-error: true
+
+    - name: Upload analysis report
+      uses: actions/upload-artifact@v3
+      with:
+        name: analysis-report
+        path: analysis-report.txt
+
+  # License Compliance
+  license-check:
+    name: License Compliance Check
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check LICENSE file
+      run: |
+        if (Test-Path LICENSE) {
+          Write-Host "✅ LICENSE file exists"
+        } else {
+          Write-Error "❌ LICENSE file missing"
+          exit 1
+        }
+      shell: pwsh
+
+    - name: Check copyright headers
+      run: |
+        $files = Get-ChildItem -Path ./src -Recurse -Include *.cs
+        $missing = @()
+
+        foreach ($file in $files) {
+          $content = Get-Content $file -First 10 | Out-String
+          if ($content -notmatch "Copyright|License") {
+            $missing += $file.FullName
+          }
+        }
+
+        if ($missing.Count -gt 0) {
+          Write-Warning "⚠️  Files missing copyright/license headers:"
+          $missing | ForEach-Object { Write-Warning $_ }
+        } else {
+          Write-Host "✅ All files have copyright headers"
+        }
+      shell: pwsh

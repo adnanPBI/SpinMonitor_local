@@ -1,0 +1,273 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ created ]
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  PROJECT_PATH: 'src/SpinMonitor.Desktop/SpinMonitor.Desktop.csproj'
+  SOLUTION_PATH: 'SpinMonitor.sln'
+
+jobs:
+  # Job 1: Code Quality & Linting
+  code-quality:
+    name: Code Quality Check
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: Check code formatting
+      run: dotnet format ${{ env.SOLUTION_PATH }} --verify-no-changes --verbosity diagnostic
+      continue-on-error: true
+
+    - name: Run code analysis
+      run: dotnet build ${{ env.SOLUTION_PATH }} /p:EnableNETAnalyzers=true /p:TreatWarningsAsErrors=false
+
+  # Job 2: Build and Test
+  build-and-test:
+    name: Build & Test
+    runs-on: windows-latest
+    needs: code-quality
+
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for versioning
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: Build solution
+      run: dotnet build ${{ env.SOLUTION_PATH }} --configuration ${{ matrix.configuration }} --no-restore
+
+    - name: Run unit tests
+      run: dotnet test ${{ env.SOLUTION_PATH }} --configuration ${{ matrix.configuration }} --no-build --verbosity normal --collect:"XPlat Code Coverage"
+      continue-on-error: true  # Until tests are added
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.configuration }}
+        path: '**/TestResults/**/*'
+        retention-days: 7
+
+  # Job 3: Security Scan
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: windows-latest
+    needs: code-quality
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: Run security scan
+      run: |
+        dotnet list package --vulnerable --include-transitive 2>&1 | tee security-scan.txt
+      continue-on-error: true
+
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-scan-results
+        path: security-scan.txt
+        retention-days: 30
+
+  # Job 4: Publish Release Build
+  publish:
+    name: Publish Release
+    runs-on: windows-latest
+    needs: [build-and-test, security-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: Publish self-contained Windows x64
+      run: |
+        dotnet publish ${{ env.PROJECT_PATH }} `
+          --configuration Release `
+          --runtime win-x64 `
+          --self-contained true `
+          -p:PublishSingleFile=true `
+          -p:IncludeNativeLibrariesForSelfExtract=true `
+          -p:EnableCompressionInSingleFile=true `
+          --output ./publish/win-x64
+
+    - name: Create version file
+      run: |
+        $version = "1.0.0.${{ github.run_number }}"
+        echo "VERSION=$version" | Out-File -FilePath version.txt -Encoding utf8
+        echo "BUILD_DATE=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath version.txt -Append -Encoding utf8
+        echo "COMMIT_SHA=${{ github.sha }}" | Out-File -FilePath version.txt -Append -Encoding utf8
+        Copy-Item version.txt ./publish/win-x64/
+      shell: pwsh
+
+    - name: Calculate checksums
+      run: |
+        cd ./publish/win-x64
+        Get-FileHash -Algorithm SHA256 SpinMonitor.Desktop.exe | Format-List | Out-File -FilePath checksums.txt -Encoding utf8
+      shell: pwsh
+
+    - name: Create ZIP archive
+      run: |
+        $version = "1.0.0.${{ github.run_number }}"
+        Compress-Archive -Path ./publish/win-x64/* -DestinationPath "./SpinMonitor-Desktop-v$version-win-x64.zip"
+      shell: pwsh
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: SpinMonitor-Desktop-win-x64
+        path: |
+          ./SpinMonitor-Desktop-*.zip
+          ./publish/win-x64/checksums.txt
+        retention-days: 90
+
+    - name: Upload to release (if tagged)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ./SpinMonitor-Desktop-*.zip
+          ./publish/win-x64/checksums.txt
+          version.txt
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Job 5: Create GitHub Release
+  create-release:
+    name: Create GitHub Release
+    runs-on: windows-latest
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: SpinMonitor-Desktop-win-x64
+        path: ./artifacts
+
+    - name: Get version
+      id: version
+      run: |
+        $version = "1.0.0.${{ github.run_number }}"
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+      shell: pwsh
+
+    - name: Create release notes
+      run: |
+        @"
+        ## SpinMonitor Desktop v${{ steps.version.outputs.version }}
+
+        ### What's New
+        - Automatic build from CI/CD pipeline
+        - Build number: ${{ github.run_number }}
+        - Commit: ${{ github.sha }}
+
+        ### Downloads
+        - **Windows 10/11 (x64)**: SpinMonitor-Desktop-v${{ steps.version.outputs.version }}-win-x64.zip
+
+        ### Installation
+        1. Download the ZIP file
+        2. Extract to your desired location
+        3. Run \`get-ffmpeg.ps1\` to download FFmpeg
+        4. Launch \`SpinMonitor.Desktop.exe\`
+
+        ### System Requirements
+        - Windows 10 (1809+) or Windows 11
+        - 4GB RAM minimum, 8GB recommended
+        - 2GB disk space
+
+        ### Documentation
+        - [Quick Start Guide](https://github.com/${{ github.repository }}/blob/main/QUICKSTART.md)
+        - [User Guide](https://github.com/${{ github.repository }}/blob/main/README.md)
+        - [MySQL Setup](https://github.com/${{ github.repository }}/blob/main/MYSQL_SETUP.md)
+
+        ### Checksums
+        See \`checksums.txt\` for SHA256 hashes.
+        "@ | Out-File -FilePath release-notes.md -Encoding utf8
+      shell: pwsh
+
+    - name: Create GitHub Release
+      uses: ncipollo/release-action@v1
+      with:
+        tag: v${{ steps.version.outputs.version }}
+        name: SpinMonitor Desktop v${{ steps.version.outputs.version }}
+        bodyFile: release-notes.md
+        artifacts: "./artifacts/*"
+        draft: false
+        prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Job 6: Notify on Failure
+  notify-failure:
+    name: Notify Build Failure
+    runs-on: windows-latest
+    needs: [code-quality, build-and-test, security-scan, publish]
+    if: failure()
+
+    steps:
+    - name: Send failure notification
+      run: |
+        Write-Host "❌ Build failed for commit ${{ github.sha }}"
+        Write-Host "Branch: ${{ github.ref }}"
+        Write-Host "Actor: ${{ github.actor }}"
+      shell: pwsh
+
+    # Add email notification or Slack webhook here if needed

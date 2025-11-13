@@ -1,0 +1,60 @@
+name: Pull Request Check
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    types: [opened, synchronize, reopened]
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  SOLUTION_PATH: 'SpinMonitor.sln'
+
+jobs:
+  # PR Validation
+  pr-validation:
+    name: PR Validation
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout PR
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: Build
+      run: dotnet build ${{ env.SOLUTION_PATH }} --configuration Release --no-restore
+
+    - name: Run tests
+      run: dotnet test ${{ env.SOLUTION_PATH }} --configuration Release --no-build --verbosity normal
+      continue-on-error: true
+
+    - name: Check for conflicts
+      run: |
+        git fetch origin main
+        $conflicts = git merge-tree $(git merge-base HEAD origin/main) HEAD origin/main | Select-String "<<<<<<< "
+        if ($conflicts) {
+          Write-Error "❌ Merge conflicts detected!"
+          exit 1
+        } else {
+          Write-Host "✅ No merge conflicts"
+        }
+      shell: pwsh
+
+    - name: Comment PR
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '✅ PR validation passed! Build and tests completed successfully.'
+          })

@@ -1,0 +1,42 @@
+<Window x:Class="SpinMonitor.Views.DbViewerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DB Table Viewer" Height="680" Width="1100"
+        WindowStartupLocation="CenterOwner">
+  <DockPanel>
+    <ToolBar DockPanel.Dock="Top">
+      <TextBlock Text="DB:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+      <TextBox x:Name="DbPathBox" Width="500" IsReadOnly="True" />
+      <Separator/>
+      <TextBlock Text="Table:" VerticalAlignment="Center" Margin="10,0,4,0"/>
+      <ComboBox x:Name="TablesCombo" Width="240" SelectionChanged="TablesCombo_SelectionChanged"/>
+      <Separator/>
+      <TextBlock Text="Filter:" VerticalAlignment="Center" Margin="10,0,4,0"/>
+      <TextBox x:Name="FilterBox" Width="260" KeyDown="FilterBox_KeyDown"/>
+      <Button Content="Apply" Margin="6,0,0,0" Click="Apply_Click"/>
+      <Separator/>
+      <TextBlock Text="Page size:" VerticalAlignment="Center" Margin="10,0,4,0"/>
+      <TextBox x:Name="PageSizeBox" Width="60" Text="500" LostFocus="PageSizeBox_LostFocus"/>
+      <Button x:Name="PrevBtn" Content="◀ Prev" Margin="8,0,0,0" Click="Prev_Click"/>
+      <Button x:Name="NextBtn" Content="Next ▶" Margin="4,0,0,0" Click="Next_Click"/>
+      <TextBlock x:Name="PageInfo" Margin="10,0,0,0" VerticalAlignment="Center"/>
+    </ToolBar>
+
+    <Grid Margin="6">
+      <DataGrid x:Name="Grid"
+                AutoGenerateColumns="True"
+                CanUserAddRows="False"
+                IsReadOnly="True"
+                HeadersVisibility="Column"
+                EnableRowVirtualization="True"
+                VirtualizingPanel.IsVirtualizing="True"
+                VirtualizingPanel.ScrollUnit="Pixel"/>
+    </Grid>
+
+    <StatusBar DockPanel.Dock="Bottom">
+      <StatusBarItem>
+        <TextBlock x:Name="StatusText" Text="Ready"/>
+      </StatusBarItem>
+    </StatusBar>
+  </DockPanel>
+</Window>

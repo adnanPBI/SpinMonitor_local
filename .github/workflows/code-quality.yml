@@ -44,7 +44,7 @@ jobs:
 
     - name: Upload formatting report
       if: failure()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: format-report
         path: format-report.json
@@ -84,7 +84,7 @@ jobs:
       shell: pwsh
 
     - name: Upload dependency report
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: dependency-report
         path: |
@@ -127,7 +127,7 @@ jobs:
       continue-on-error: true
 
     - name: Upload analysis report
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: analysis-report
         path: analysis-report.txt

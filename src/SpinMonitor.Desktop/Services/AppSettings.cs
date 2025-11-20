@@ -25,6 +25,7 @@ namespace SpinMonitor.Services
         public PersistenceSettings Persistence { get; set; } = new PersistenceSettings();
         public ReconnectSettings Reconnect { get; set; } = new ReconnectSettings();
         public MySqlSettings MySQL { get; set; } = new MySqlSettings();  // ✅ ADDED MySQL settings
+        public BackendApiSettings BackendApi { get; set; } = new BackendApiSettings();  // ✅ Backend API settings
 
         public class DetectionSettings
         {
@@ -53,6 +54,31 @@ namespace SpinMonitor.Services
             public string Username { get; set; } = "civicos_monitor";
             public string Password { get; set; } = "Na4FGYcayR5MpcJdrZVP";
             public int Port { get; set; } = 3306;
+        }
+
+        // ✅ Backend API configuration (alternative to direct MySQL)
+        public class BackendApiSettings
+        {
+            /// <summary>
+            /// Enable Backend API logging instead of direct MySQL connection.
+            /// If both MySQL.Enabled and BackendApi.Enabled are true, both methods will be used.
+            /// </summary>
+            public bool Enabled { get; set; } = false;
+
+            /// <summary>
+            /// Base URL of the Express.js backend API (e.g., http://localhost:3000)
+            /// </summary>
+            public string BaseUrl { get; set; } = "http://localhost:3000";
+
+            /// <summary>
+            /// Optional API key for authentication (leave empty if not required)
+            /// </summary>
+            public string? ApiKey { get; set; } = null;
+
+            /// <summary>
+            /// Check backend health on startup
+            /// </summary>
+            public bool CheckHealthOnStartup { get; set; } = true;
         }
 
         public static AppSettings Load(string path)

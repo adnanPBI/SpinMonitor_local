@@ -66,9 +66,9 @@ namespace SpinMonitor.Services
             public bool Enabled { get; set; } = false;
 
             /// <summary>
-            /// Base URL of the Express.js backend API (e.g., http://localhost:3000)
+            /// Base URL of the C# ASP.NET Core backend API (e.g., http://localhost:5000)
             /// </summary>
-            public string BaseUrl { get; set; } = "http://localhost:3000";
+            public string BaseUrl { get; set; } = "http://localhost:5000";
 
             /// <summary>
             /// Optional API key for authentication (leave empty if not required)

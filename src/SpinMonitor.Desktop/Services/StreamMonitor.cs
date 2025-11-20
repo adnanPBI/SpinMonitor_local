@@ -23,23 +23,46 @@ namespace SpinMonitor.Services
         private readonly StationLogGate _logGate;
         private readonly List<StreamItem> _all = new();
         private readonly object _lock = new();
-        
+
         private readonly Dictionary<string, (CancellationTokenSource cts, Task task)> _activeTasks = new();
         private CancellationTokenSource? _mainCts = null;
         private readonly Dictionary<string, (string track, DateTime time)> _lastDetection = new();
-        
+
         // ✅ NEW: Time-based circuit breaker (auto-resets)
         private readonly Dictionary<string, DateTime> _circuitBreakerResetTime = new();
         private const int CircuitBreakerResetMinutes = 5;
+
+        // ✅ Backend API client for detection logging
+        private readonly DetectionApiClient? _apiClient;
 
         public StreamMonitor(SqliteFingerprintStore store, AppSettings settings)
         {
             _store = store;
             _settings = settings;
-            
+
             var timeoutSeconds = Math.Max(60, settings.Reconnect.OfflineTimeoutSeconds);
             _logGate = new StationLogGate(TimeSpan.FromSeconds(timeoutSeconds));
-            
+
+            // Initialize Backend API client if enabled
+            if (_settings.BackendApi.Enabled)
+            {
+                _apiClient = new DetectionApiClient(_settings.BackendApi.BaseUrl, _settings.BackendApi.ApiKey);
+                StructuredLogger.LogAppInfo($"Backend API client initialized: {_settings.BackendApi.BaseUrl}");
+
+                // Optional: Check health on startup
+                if (_settings.BackendApi.CheckHealthOnStartup)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        var healthy = await _apiClient.CheckHealthAsync();
+                        if (healthy)
+                            StructuredLogger.LogAppInfo("Backend API health check: OK");
+                        else
+                            StructuredLogger.LogAppWarning("Backend API health check: FAILED");
+                    });
+                }
+            }
+
             StructuredLogger.LogAppInfo($"StreamMonitor initialized: timeout={timeoutSeconds}s");
         }
 
@@ -618,6 +641,21 @@ namespace SpinMonitor.Services
                                     {
                                         _ = Task.Run(() => AppendMySqlLog(item.Name, streamType, item.StreamNumber,
                                             trackTitle, timestamp, windowSec, confidence));
+                                    }
+
+                                    // ✅ Send to Backend API if enabled
+                                    if (_settings.BackendApi.Enabled && _apiClient != null)
+                                    {
+                                        _ = Task.Run(async () =>
+                                        {
+                                            var detection = DetectionApiClient.DetectionRecord.Create(
+                                                item.Name, streamType, item.StreamNumber,
+                                                trackTitle, timestamp, windowSec, confidence);
+
+                                            var success = await _apiClient.SendDetectionAsync(detection);
+                                            if (success)
+                                                StructuredLogger.LogAppInfo($"API: Logged detection for '{trackTitle}' on '{item.Name}'");
+                                        });
                                     }
 
                                     try
